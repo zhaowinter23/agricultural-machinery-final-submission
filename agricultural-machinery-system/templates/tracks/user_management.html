@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+
+{% block title %}用户管理 - 农机作业数据分析系统{% endblock %}
+
+{% block content %}
+<div class="container mt-4 animate-in">
+    <div class="page-header">
+        <i class="bi bi-people"></i>
+        <h4>用户账号管理</h4>
+        <span class="subtitle">共 {{ users|length }} 个用户</span>
+    </div>
+
+    <div class="card">
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th><i class="bi bi-person"></i> 用户名</th>
+                        <th><i class="bi bi-envelope"></i> 邮箱</th>
+                        <th><i class="bi bi-shield"></i> 角色</th>
+                        <th><i class="bi bi-calendar"></i> 注册时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td>{{ u.pk }}</td>
+                        <td>
+                            <div class="d-flex align-items-center gap-2">
+                                <div style="width:32px;height:32px;background:var(--g-50);border-radius:50%;display:flex;align-items:center;justify-content:center;">
+                                    <i class="bi bi-person-fill" style="color:var(--g-500);"></i>
+                                </div>
+                                {{ u.username }}
+                            </div>
+                        </td>
+                        <td>{{ u.email|default:"-" }}</td>
+                        <td>
+                            {% if u.is_superuser %}
+                            <span class="badge" style="background:#ff7043;"><i class="bi bi-shield-fill"></i> 超级管理员</span>
+                            {% elif u.is_staff %}
+                            <span class="badge" style="background:#2d6a4f;"><i class="bi bi-shield-fill-check"></i> 管理员</span>
+                            {% else %}
+                            <span class="badge" style="background:#52b788;"><i class="bi bi-person-fill"></i> 普通用户</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ u.date_joined|date:"Y-m-d H:i" }}</td>
+                        <td>
+                            {% if u != request.user %}
+                            <form method="post" style="display:inline" onsubmit="return confirm('确定删除用户 {{ u.username }} 吗？')">
+                                {% csrf_token %}
+                                <input type="hidden" name="delete_user_id" value="{{ u.pk }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash3"></i> 删除</button>
+                            </form>
+                            {% else %}
+                                <span class="badge bg-light text-dark">当前用户</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

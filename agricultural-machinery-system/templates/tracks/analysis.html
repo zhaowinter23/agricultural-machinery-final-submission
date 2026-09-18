@@ -1,0 +1,175 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ track.name }} 详情分析 - 农机作业数据分析系统{% endblock %}
+
+{% block content %}
+<div class="container mt-4 animate-in">
+    <div class="page-header">
+        <i class="bi bi-geo-alt-fill"></i>
+        <h4>{{ track.name }} — 作业量详情分析</h4>
+        <div class="actions">
+            <a href="{% url 'statistics' %}" class="btn btn-outline-green btn-sm"><i class="bi bi-arrow-left"></i> 返回统计</a>
+            <a href="{% url 'home' %}" class="btn btn-green btn-sm"><i class="bi bi-map"></i> 在地图查看</a>
+        </div>
+    </div>
+
+    <!-- 四指标卡 -->
+    <div class="row mb-2">
+        <div class="col-6 col-md-3 mb-3">
+            <div class="stat-card">
+                <i class="bi bi-clock-history"></i>
+                <div class="value">{{ stats.total_duration_hours|floatformat:2 }}</div>
+                <div class="label">作业总时长（小时）</div>
+                <div class="sub">含作业+非作业，已剔除关机停歇</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3 mb-3">
+            <div class="stat-card">
+                <i class="bi bi-signpost-split"></i>
+                <div class="value">{{ stats.total_distance_km|floatformat:2 }}</div>
+                <div class="label">作业总行程（公里）</div>
+                <div class="sub">基于 x,y 大地坐标欧氏距离</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3 mb-3">
+            <div class="stat-card accent">
+                <i class="bi bi-arrows-angle-expand"></i>
+                <div class="value">{{ stats.area_mu|floatformat:2 }}</div>
+                <div class="label">作业面积（亩）</div>
+                <div class="sub">作业行程 × 幅宽 {{ stats.width|floatformat:1 }}m</div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3 mb-3">
+            <div class="stat-card">
+                <i class="bi bi-speedometer2"></i>
+                <div class="value">{{ stats.avg_working_speed|floatformat:2 }}</div>
+                <div class="label">田间平均速度（km/h）</div>
+                <div class="sub">工作状态点速度均值</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- 左：数据清洗明细 -->
+        <div class="col-lg-5 mb-4">
+            <div class="card h-100">
+                <div class="card-header"><h6 class="mb-0"><i class="bi bi-eraser-fill"></i> 数据清洗与时间构成</h6></div>
+                <div class="card-body">
+                    <table class="table table-sm mb-3">
+                        <tbody>
+                            <tr><td class="text-muted">未清洗时长（首尾时间差）</td><td class="text-end fw-semibold">{{ stats.raw_duration_hours|floatformat:2 }} h</td></tr>
+                            <tr><td class="text-muted">关机停歇次数</td><td class="text-end fw-semibold">{{ stats.shutdown_count }} 次</td></tr>
+                            <tr><td class="text-muted">剔除的停歇时长</td><td class="text-end fw-semibold text-warning">{{ stats.shutdown_time_hours|floatformat:2 }} h</td></tr>
+                            <tr><td class="text-muted">连续作业段数</td><td class="text-end fw-semibold">{{ stats.segments }} 段</td></tr>
+                            <tr><td class="text-muted">有效作业时长</td><td class="text-end fw-semibold" style="color:var(--g-600)">{{ stats.working_time_hours|floatformat:2 }} h</td></tr>
+                            <tr><td class="text-muted">段内非作业时长（地头转弯/停歇）</td><td class="text-end fw-semibold">{{ stats.idle_time_hours|floatformat:2 }} h</td></tr>
+                            <tr><td class="text-muted">轨迹点 / 工作点</td><td class="text-end fw-semibold">{{ stats.working_point_count }} / {{ stats.point_count }}</td></tr>
+                        </tbody>
+                    </table>
+
+                    <div class="fw-semibold mb-2" style="color:var(--g-800);">总时长构成（清洗后 {{ stats.total_duration_hours|floatformat:2 }}h）</div>
+                    <div class="comp-bar" id="compBar"></div>
+                    <div class="comp-legend" id="compLegend"></div>
+
+                    {% if stats.shutdown_count > 0 %}
+                    <div class="clean-note mt-3">
+                        <i class="bi bi-info-circle"></i>
+                        检测到 {{ stats.shutdown_count }} 处关机停歇，已从作业总时长中剔除共 {{ stats.shutdown_time_hours|floatformat:2 }} 小时。
+                    </div>
+                    {% else %}
+                    <div class="clean-note mt-3">
+                        <i class="bi bi-check-circle"></i>
+                        未检测到关机停歇，轨迹时间连续。
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 右：分布图 -->
+        <div class="col-lg-7">
+            <div class="row">
+                <div class="col-12 mb-4">
+                    <div class="card">
+                        <div class="card-header"><h6 class="mb-0"><i class="bi bi-graph-up"></i> 作业速度分布（工作点）</h6></div>
+                        <div class="card-body"><div class="chart-container-sm"><canvas id="speedChart"></canvas></div></div>
+                    </div>
+                </div>
+                <div class="col-12 mb-4">
+                    <div class="card">
+                        <div class="card-header"><h6 class="mb-0"><i class="bi bi-layers"></i> 作业深度分布（工作点）</h6></div>
+                        <div class="card-body"><div class="chart-container-sm"><canvas id="depthChart"></canvas></div></div>
+                    </div>
+                </div>
+                {% if stats.shutdown_count > 0 %}
+                <div class="col-12 mb-4">
+                    <div class="card">
+                        <div class="card-header"><h6 class="mb-0"><i class="bi bi-hourglass-split"></i> 各关机停歇段时长（分钟）</h6></div>
+                        <div class="card-body"><div class="chart-container-sm"><canvas id="gapChart"></canvas></div></div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+<script>
+var CD = {{ chart_data|safe }};
+var green = 'rgba(82,183,136,0.78)', greenB = 'rgba(45,106,79,1)';
+var amber = 'rgba(244,162,97,0.85)', amberB = 'rgba(224,142,60,1)';
+var gray = 'rgba(173,181,189,0.7)', grayB = 'rgba(120,128,135,1)';
+
+// 时间构成条
+(function(){
+    var d = CD.time_composition.data;
+    var total = d.reduce((a,b)=>a+b,0) || 1;
+    var colors = [green, gray, amber];
+    var bar = document.getElementById('compBar');
+    var legend = document.getElementById('compLegend');
+    CD.time_composition.labels.forEach((lb, i) => {
+        var pct = d[i]/total*100;
+        if (pct > 0) {
+            var seg = document.createElement('div');
+            seg.className = 'seg';
+            seg.style.background = colors[i];
+            seg.style.width = pct + '%';
+            seg.textContent = pct >= 8 ? (d[i].toFixed(1)+'h') : '';
+            bar.appendChild(seg);
+        }
+        var li = document.createElement('div');
+        li.className = 'li';
+        li.innerHTML = '<span class="dot" style="background:'+colors[i]+'"></span>'+lb+'：'+d[i].toFixed(2)+'h ('+pct.toFixed(1)+'%)';
+        legend.appendChild(li);
+    });
+})();
+
+new Chart(document.getElementById('speedChart'), {
+    type: 'bar',
+    data: { labels: CD.speed_labels, datasets: [{ label: '点数', data: CD.speed_counts, backgroundColor: green, borderColor: greenB, borderWidth: 1, borderRadius: 5 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, grid: { color: '#eef2ee' }, title: { display: true, text: '轨迹点数' } }, x: { grid: { display: false }, title: { display: true, text: '速度 (km/h)' } } } }
+});
+
+new Chart(document.getElementById('depthChart'), {
+    type: 'bar',
+    data: { labels: CD.depth_labels, datasets: [{ label: '点数', data: CD.depth_counts,
+        backgroundColor: CD.depth_labels.map((l,i)=> l==='<300' ? gray : amber),
+        borderColor: CD.depth_labels.map((l,i)=> l==='<300' ? grayB : amberB), borderWidth: 1, borderRadius: 5 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, grid: { color: '#eef2ee' }, title: { display: true, text: '轨迹点数' } }, x: { grid: { display: false }, title: { display: true, text: '作业深度 (mm)' } } } }
+});
+
+{% if stats.shutdown_count > 0 %}
+new Chart(document.getElementById('gapChart'), {
+    type: 'bar',
+    data: { labels: CD.gap_minutes.map((g,i)=>'停歇'+(i+1)), datasets: [{ label: '时长(分钟)', data: CD.gap_minutes, backgroundColor: amber, borderColor: amberB, borderWidth: 1, borderRadius: 5 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, grid: { color: '#eef2ee' }, title: { display: true, text: '分钟' } }, x: { grid: { display: false } } } }
+});
+{% endif %}
+</script>
+{% endblock %}

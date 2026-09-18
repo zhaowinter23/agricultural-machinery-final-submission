@@ -1,0 +1,13 @@
+[run]
+# 覆盖率统计主系统的 tracks / accounts 应用
+source =
+    tracks
+    accounts
+omit =
+    */migrations/*
+    */tests.py
+    */management/*
+    */apps.py
+
+[report]
+show_missing = True

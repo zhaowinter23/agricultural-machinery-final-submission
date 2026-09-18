@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+test_db.sqlite3
+test_db.sqlite3-journal
+.coverage
+htmlcov/
+playwright-report/
+test-results/

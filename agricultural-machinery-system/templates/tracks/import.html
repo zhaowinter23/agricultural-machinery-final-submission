@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+
+{% block title %}数据导入 - 农机作业数据分析系统{% endblock %}
+
+{% block content %}
+<div class="container mt-4 animate-in">
+    <div class="page-header">
+        <i class="bi bi-cloud-upload"></i>
+        <h4>导入地块轨迹数据</h4>
+    </div>
+
+    <div class="row">
+        <div class="col-md-5">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title"><i class="bi bi-file-earmark-arrow-up"></i> 上传数据文件</h5>
+                    <form method="post" enctype="multipart/form-data" id="uploadForm">
+                        {% csrf_token %}
+                        <div class="upload-zone mb-3" id="dropZone" onclick="document.getElementById('fileInput').click()">
+                            <i class="bi bi-cloud-arrow-up d-block mb-2"></i>
+                            <p class="mb-1 fw-semibold" style="color:var(--g-700);">点击或拖拽CSV文件到此处</p>
+                            <small class="text-muted">支持 .csv 格式，可同时上传多个文件</small>
+                            <input type="file" name="files" id="fileInput" multiple accept=".csv" required style="display:none">
+                        </div>
+                        <div id="fileList" class="mb-3" style="display:none;">
+                            <label class="form-label fw-semibold">已选择的文件：</label>
+                            <ul class="list-group list-group-flush" id="selectedFiles"></ul>
+                        </div>
+                        <button type="submit" class="btn btn-green w-100 py-2" id="uploadBtn">
+                            <i class="bi bi-upload"></i> 开始导入
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-7">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-database"></i> 已导入地块</h5>
+                    <span class="badge" style="background:var(--g-700);">{{ tracks|length }} 个</span>
+                </div>
+                <div class="card-body p-0" style="max-height: 420px; overflow-y: auto;">
+                    {% for track in tracks %}
+                    <div class="d-flex justify-content-between align-items-center px-3 py-3 border-bottom" style="transition:all 0.2s;">
+                        <div class="d-flex align-items-center gap-3">
+                            <div style="width:40px;height:40px;background:var(--g-50);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+                                <i class="bi bi-geo-alt" style="color:var(--g-500);font-size:1.1rem;"></i>
+                            </div>
+                            <div>
+                                <strong>{{ track.name }}</strong>
+                                <small class="text-muted d-block">{{ track.points.count }} 个轨迹点 | {{ track.created_at|date:"Y-m-d H:i" }}</small>
+                            </div>
+                        </div>
+                        <form method="post" action="{% url 'track_delete' track.pk %}" onsubmit="return confirm('确定删除地块 {{ track.name }} 吗？')">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash3"></i></button>
+                        </form>
+                    </div>
+                    {% empty %}
+                    <div class="text-center text-muted py-5">
+                        <i class="bi bi-inbox" style="font-size:2rem;"></i>
+                        <p class="mt-2">暂无地块数据</p>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+var dropZone = document.getElementById('dropZone');
+var fileInput = document.getElementById('fileInput');
+// 已存在的地块名，用于上传前判重提示
+var existingNames = [{% for track in tracks %}'{{ track.name }}'{% if not forloop.last %},{% endif %}{% endfor %}];
+
+['dragenter','dragover'].forEach(e => dropZone.addEventListener(e, function(ev){ ev.preventDefault(); dropZone.classList.add('drag-over'); }));
+['dragleave','drop'].forEach(e => dropZone.addEventListener(e, function(ev){ ev.preventDefault(); dropZone.classList.remove('drag-over'); }));
+dropZone.addEventListener('drop', function(e) {
+    fileInput.files = e.dataTransfer.files;
+    showFileList(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', function(){ showFileList(this.files); });
+
+function trackNameOf(fileName) {
+    return '地块' + fileName.replace(/\.[^.]+$/, '');
+}
+
+function showFileList(files) {
+    if (files.length === 0) return;
+    document.getElementById('fileList').style.display = '';
+    var list = document.getElementById('selectedFiles');
+    list.innerHTML = '';
+    var dupCount = 0;
+    for (var f of files) {
+        var tn = trackNameOf(f.name);
+        var dup = existingNames.indexOf(tn) >= 0;
+        if (dup) dupCount++;
+        var badge = dup
+            ? '<span class="badge bg-warning text-dark ms-auto"><i class="bi bi-exclamation-triangle"></i> 已存在，将跳过</span>'
+            : '<small class="text-muted ms-auto">' + (f.size/1024).toFixed(1) + ' KB</small>';
+        var icon = dup ? 'bi bi-file-earmark-excel text-warning' : 'bi bi-file-earmark-spreadsheet text-success';
+        list.innerHTML += '<li class="list-group-item d-flex align-items-center gap-2"><i class="' + icon + '"></i>' + f.name + badge + '</li>';
+    }
+    if (dupCount > 0) {
+        list.innerHTML += '<li class="list-group-item text-warning small"><i class="bi bi-info-circle"></i> ' + dupCount + ' 个地块已存在，导入时将自动跳过；如需更新请先在右侧列表删除原地块。</li>';
+    }
+}
+</script>
+{% endblock %}

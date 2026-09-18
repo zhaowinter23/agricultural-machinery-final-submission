@@ -1,0 +1,242 @@
+{% extends 'base.html' %}
+
+{% block title %}统计分析 - 农机作业数据分析系统{% endblock %}
+
+{% block content %}
+<div class="container mt-4 animate-in">
+    <div class="page-header">
+        <i class="bi bi-bar-chart-line"></i>
+        <h4>农机作业量统计分析</h4>
+        <span class="subtitle">共 {{ all_stats|length }} 个地块</span>
+        <div class="actions">
+            <a href="{% url 'export_statistics' %}" class="btn btn-accent btn-sm"><i class="bi bi-file-earmark-excel"></i> 导出Excel</a>
+        </div>
+    </div>
+
+    {% if summary %}
+    <!-- 全局汇总卡片 -->
+    <div class="row mb-2">
+        <div class="col-12 col-sm-6 col-md mb-3">
+            <div class="stat-card">
+                <i class="bi bi-geo-alt"></i>
+                <div class="value">{{ summary.track_count }}</div>
+                <div class="label">地块总数</div>
+                <div class="sub">{{ summary.total_points }} 个轨迹点</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-md mb-3">
+            <div class="stat-card">
+                <i class="bi bi-clock-history"></i>
+                <div class="value">{{ summary.total_duration_hours|floatformat:1 }}</div>
+                <div class="label">作业总时长(h)</div>
+                <div class="delta">已剔除停歇 {{ summary.total_shutdown_hours|floatformat:1 }}h</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-md mb-3">
+            <div class="stat-card">
+                <i class="bi bi-signpost-split"></i>
+                <div class="value">{{ summary.total_distance_km|floatformat:1 }}</div>
+                <div class="label">作业总行程(km)</div>
+                <div class="sub">x,y 坐标欧氏距离</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-md mb-3">
+            <div class="stat-card accent">
+                <i class="bi bi-arrows-angle-expand"></i>
+                <div class="value">{{ summary.total_area_mu|floatformat:0 }}</div>
+                <div class="label">作业总面积(亩)</div>
+                <div class="sub">行程 × 幅宽</div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-md mb-3">
+            <div class="stat-card">
+                <i class="bi bi-speedometer2"></i>
+                <div class="value">{{ summary.avg_speed|floatformat:2 }}</div>
+                <div class="label">平均作业速度(km/h)</div>
+                <div class="sub">工作点速度均值</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 各地块统计表格 -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-table"></i> 各地块作业量指标</h5>
+            <small class="text-muted">点击地块名称查看详情分析</small>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover table-clickable mb-0">
+                <thead>
+                    <tr>
+                        <th>地块名称</th>
+                        <th><i class="bi bi-clock"></i> 总时长(h)</th>
+                        <th><i class="bi bi-hourglass-split"></i> 剔除停歇(h)</th>
+                        <th><i class="bi bi-signpost-split"></i> 总行程(km)</th>
+                        <th><i class="bi bi-arrows-angle-expand"></i> 面积(亩)</th>
+                        <th><i class="bi bi-speedometer2"></i> 平均速度(km/h)</th>
+                        <th>工作点/总点</th>
+                        <th><i class="bi bi-rulers"></i> 幅宽(m)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in all_stats %}
+                    <tr onclick="window.location.href='{% url 'track_analysis' s.track.pk %}'">
+                        <td><strong><i class="bi bi-geo-alt text-success"></i> {{ s.track.name }}</strong></td>
+                        <td>{{ s.total_duration_hours|floatformat:2 }}</td>
+                        <td>
+                            {% if s.shutdown_count > 0 %}
+                            <span class="text-warning">{{ s.shutdown_time_hours|floatformat:2 }}</span>
+                            {% else %}
+                            <span class="text-muted">0</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ s.total_distance_km|floatformat:2 }}</td>
+                        <td><span class="badge badge-accent">{{ s.area_mu|floatformat:1 }}</span></td>
+                        <td>{{ s.avg_working_speed|floatformat:2 }}</td>
+                        <td>{{ s.working_point_count }} / {{ s.point_count }}</td>
+                        <td>{{ s.width|floatformat:1 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="8" class="text-center text-muted py-4"><i class="bi bi-inbox"></i> 暂无数据，请先导入地块轨迹</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 清洗前后时长对比 -->
+    <div class="card mb-4">
+        <div class="card-header"><h6 class="mb-0"><i class="bi bi-hourglass-split"></i> 作业总时长：清洗前后对比（体现关机停歇剔除）</h6></div>
+        <div class="card-body"><div class="chart-container"><canvas id="cleanCompareChart"></canvas></div></div>
+    </div>
+
+    <!-- 图表 -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header"><h6 class="mb-0"><i class="bi bi-signpost-split"></i> 作业总行程对比</h6></div>
+                <div class="card-body"><div class="chart-container"><canvas id="distanceChart"></canvas></div></div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header"><h6 class="mb-0"><i class="bi bi-arrows-angle-expand"></i> 作业面积对比</h6></div>
+                <div class="card-body"><div class="chart-container"><canvas id="areaChart"></canvas></div></div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header"><h6 class="mb-0"><i class="bi bi-speedometer2"></i> 田间平均作业速度对比</h6></div>
+                <div class="card-body"><div class="chart-container"><canvas id="speedChart"></canvas></div></div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header"><h6 class="mb-0"><i class="bi bi-pie-chart"></i> 作业面积占比</h6></div>
+                <div class="card-body"><div class="chart-container"><canvas id="pieChart"></canvas></div></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 综合雷达图 -->
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card mb-4">
+                <div class="card-header"><h6 class="mb-0"><i class="bi bi-radar"></i> 各地块综合指标雷达图（前4地块，归一化）</h6></div>
+                <div class="card-body"><div class="chart-container" style="height:360px;"><canvas id="radarChart"></canvas></div></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+<script>
+fetch('{% url "stats_chart_data" %}')
+    .then(r => r.json())
+    .then(data => {
+        // 绿色阶梯 + 琥珀金点缀
+        var greens = [
+            'rgba(27,67,50,0.78)','rgba(46,125,50,0.78)','rgba(56,142,60,0.78)',
+            'rgba(82,183,136,0.78)','rgba(116,198,157,0.78)','rgba(149,213,178,0.78)',
+            'rgba(200,230,201,0.78)','rgba(244,162,97,0.78)'
+        ];
+        var borders = greens.map(c => c.replace('0.78','1'));
+        var accent = 'rgba(244,162,97,0.85)';
+        var accentBorder = 'rgba(224,142,60,1)';
+
+        var commonOpts = {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, grid: { color: '#eef2ee' } }, x: { grid: { display: false } } }
+        };
+
+        // 清洗前后对比：分组柱状
+        new Chart(document.getElementById('cleanCompareChart'), {
+            type: 'bar',
+            data: {
+                labels: data.labels,
+                datasets: [
+                    { label: '清洗前(含停歇)', data: data.raw_duration, backgroundColor: accent, borderColor: accentBorder, borderWidth: 1, borderRadius: 5 },
+                    { label: '清洗后(作业总时长)', data: data.duration, backgroundColor: 'rgba(45,106,79,0.78)', borderColor: 'rgba(27,67,50,1)', borderWidth: 1, borderRadius: 5 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top', labels: { usePointStyle: true, padding: 14 } } },
+                scales: { y: { beginAtZero: true, grid: { color: '#eef2ee' }, title: { display: true, text: '小时 (h)' } }, x: { grid: { display: false } } }
+            }
+        });
+
+        new Chart(document.getElementById('distanceChart'), {
+            type:'bar', data:{labels:data.labels, datasets:[{label:'总行程(km)',data:data.total_distance,backgroundColor:greens,borderColor:borders,borderWidth:1,borderRadius:6}]}, options:commonOpts
+        });
+        new Chart(document.getElementById('areaChart'), {
+            type:'bar', data:{labels:data.labels, datasets:[{label:'面积(亩)',data:data.area,backgroundColor:greens.map((c,i)=>i%4===0?accent:c),borderColor:borders,borderWidth:1,borderRadius:6}]}, options:commonOpts
+        });
+        new Chart(document.getElementById('speedChart'), {
+            type:'bar', data:{labels:data.labels, datasets:[{label:'平均速度(km/h)',data:data.avg_speed,backgroundColor:greens,borderColor:borders,borderWidth:1,borderRadius:6}]}, options:commonOpts
+        });
+
+        // 雷达图 - 取前4个地块
+        var radarLabels = data.labels.slice(0,4);
+        function normalize(arr, idx) {
+            var max = Math.max(...arr);
+            return max > 0 ? (arr[idx] / max * 100) : 0;
+        }
+        var radarDatasets = radarLabels.map((label, i) => ({
+            label: label,
+            data: [
+                normalize(data.duration, i),
+                normalize(data.total_distance, i),
+                normalize(data.area, i),
+                normalize(data.avg_speed, i),
+            ],
+            borderColor: borders[i],
+            backgroundColor: greens[i].replace('0.78','0.18'),
+            pointBackgroundColor: borders[i],
+        }));
+        new Chart(document.getElementById('radarChart'), {
+            type: 'radar',
+            data: { labels: ['总时长', '总行程', '面积', '平均速度'], datasets: radarDatasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: { r: { beginAtZero: true, ticks: { stepSize: 25 }, grid: { color: '#e0e6e0' }, pointLabels: { font: { size: 13 } } } },
+                plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 12 } } }
+            }
+        });
+
+        // 饼图
+        new Chart(document.getElementById('pieChart'), {
+            type: 'doughnut',
+            data: { labels: data.labels, datasets: [{ data: data.area, backgroundColor: greens, borderColor: 'white', borderWidth: 2 }] },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 10, font: { size: 11 } } } }
+            }
+        });
+    });
+</script>
+{% endblock %}

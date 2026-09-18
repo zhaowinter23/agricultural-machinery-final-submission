@@ -1,0 +1,449 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}农机作业数据分析系统{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+.sidebar-header { background: linear-gradient(135deg, #2d6a4f, #40916c); color: white; padding: 1.2rem; }
+.sidebar-header h5 { margin: 0; font-weight: 600; }
+.sidebar-stats { display: flex; gap: 8px; padding: 0 1rem; margin-top: -6px; }
+.sidebar-stat { flex:1; background: white; border-radius: 8px; padding: 10px; text-align: center; box-shadow: var(--shadow-sm); }
+.sidebar-stat .num { font-size: 20px; font-weight: 700; color: var(--g-700); }
+.sidebar-stat .txt { font-size: 11px; color: #888; }
+.leaflet-popup-content-wrapper { border-radius: 10px !important; }
+.leaflet-popup-content { margin: 10px 14px !important; }
+.track-info-panel { display: none; }
+.tractor-div { background: linear-gradient(135deg,#1b4332,#2d6a4f); color:#fff; border-radius:50%; width:34px; height:34px; display:flex; align-items:center; justify-content:center; font-size:18px; border:3px solid #fff; box-shadow:0 2px 10px rgba(0,0,0,0.5),0 0 0 5px rgba(244,162,97,0.35); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="map-container">
+    <!-- 侧边栏 -->
+    <div class="sidebar" id="sidebar">
+        <button class="sidebar-toggle" id="sidebarToggle">
+            <i class="bi bi-layout-sidebar" style="font-size:18px;color:#2d6a4f;"></i>
+        </button>
+        <div class="sidebar-header">
+            <h5><i class="bi bi-list-ul"></i> 地块列表</h5>
+        </div>
+        <div class="sidebar-stats p-3">
+            <div class="sidebar-stat">
+                <div class="num">{{ tracks|length }}</div>
+                <div class="txt">地块数</div>
+            </div>
+            <div class="sidebar-stat">
+                <div class="num">{{ total_points }}</div>
+                <div class="txt">轨迹点</div>
+            </div>
+        </div>
+
+        <!-- 当前地块信息面板（选中地块后显示） -->
+        <div class="track-info-panel" id="trackInfoPanel"></div>
+
+        <div class="px-2 pt-2">
+            <input type="text" class="form-control form-control-sm" id="trackSearch" placeholder="搜索地块..." style="border-radius:8px;border-color:#c8e6c9;">
+        </div>
+        <ul class="track-list pt-2" id="trackList">
+            {% for track in tracks %}
+            <li data-id="{{ track.pk }}" data-name="{{ track.name }}" onclick="loadTrack({{ track.pk }}, this)">
+                <i class="bi bi-geo-alt"></i>
+                <div>
+                    <strong>{{ track.name }}</strong>
+                    <small class="text-muted d-block">{{ track.points.count }} 个轨迹点</small>
+                </div>
+            </li>
+            {% empty %}
+            <li class="text-muted p-3"><i class="bi bi-inbox"></i> 暂无地块数据</li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <!-- 地图 -->
+    <div id="map"></div>
+
+    <!-- 轨迹回放控件 -->
+    <div class="playback-bar" id="playbackBar">
+        <button class="pb-btn" id="pbPlay" title="播放/暂停"><i class="bi bi-play-fill"></i></button>
+        <button class="pb-btn" id="pbStop" title="停止" style="background:linear-gradient(135deg,#6c757d,#495057);"><i class="bi bi-stop-fill"></i></button>
+        <select class="pb-speed" id="pbSpeed">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="4" selected>4x</option>
+            <option value="8">8x</option>
+            <option value="16">16x</option>
+        </select>
+        <div class="pb-progress"><div class="pb-fill" id="pbFill"></div></div>
+        <span class="pb-label" id="pbLabel">0:00 / 0:00</span>
+    </div>
+</div>
+{% endblock %}
+
+{% block footer %}{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+var map = L.map('map', {
+    center: [47.13, 131.47],
+    zoom: 14,
+    zoomControl: false
+});
+
+L.control.zoom({position: 'topright'}).addTo(map);
+
+var osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OSM', maxZoom: 19
+}).addTo(map);
+
+var satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '&copy; Esri', maxZoom: 19
+});
+
+L.control.layers({"矢量地图": osmLayer, "遥感影像": satelliteLayer}, null, {position: 'topright'}).addTo(map);
+
+// 测距工具
+var measureMode = false, measurePoints = [], measureMarkers = [], measureLine = null, measureLabels = [];
+
+L.Control.Measure = L.Control.extend({
+    onAdd: function(map) {
+        var btn = L.DomUtil.create('button', 'leaflet-bar leaflet-control');
+        btn.innerHTML = '<i class="bi bi-rulers" style="font-size:14px;"></i>';
+        btn.title = '测距';
+        btn.style.cssText = 'padding:4px 6px;cursor:pointer;background:white;font-size:16px;';
+        L.DomEvent.disableClickPropagation(btn);
+        L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            measureMode = !measureMode;
+            btn.style.background = measureMode ? '#c8e6c9' : 'white';
+            map.getContainer().style.cursor = measureMode ? 'crosshair' : '';
+            if (measureMode) clearMeasure();
+            else clearMeasure();
+        });
+        return btn;
+    }
+});
+new L.Control.Measure({position: 'topright'}).addTo(map);
+
+function clearMeasure() {
+    measurePoints = [];
+    measureMarkers.forEach(m => map.removeLayer(m)); measureMarkers = [];
+    measureLabels.forEach(l => map.removeLayer(l)); measureLabels = [];
+    if (measureLine) { map.removeLayer(measureLine); measureLine = null; }
+}
+
+function formatDist(m) { return m >= 1000 ? (m/1000).toFixed(2)+' km' : m.toFixed(1)+' m'; }
+function haversine(a,b,c,d) {
+    var R=6371000, dLat=(c-a)*Math.PI/180, dLon=(d-b)*Math.PI/180;
+    var x=Math.sin(dLat/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dLon/2)**2;
+    return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+
+map.on('click', function(e) {
+    if (!measureMode) return;
+    measurePoints.push(e.latlng);
+    measureMarkers.push(L.circleMarker(e.latlng, {radius:5, color:'#2d6a4f', fillColor:'#2d6a4f', fillOpacity:1}).addTo(map));
+    if (measurePoints.length > 1) {
+        if (measureLine) map.removeLayer(measureLine);
+        measureLine = L.polyline(measurePoints, {color:'#2d6a4f', weight:2, dashArray:'6 4'}).addTo(map);
+        var total = 0;
+        for (var i=1;i<measurePoints.length;i++) total += haversine(measurePoints[i-1].lat,measurePoints[i-1].lng,measurePoints[i].lat,measurePoints[i].lng);
+        measureLabels.forEach(l => map.removeLayer(l)); measureLabels = [];
+        for (var i=1;i<measurePoints.length;i++) {
+            var sd = haversine(measurePoints[i-1].lat,measurePoints[i-1].lng,measurePoints[i].lat,measurePoints[i].lng);
+            measureLabels.push(L.marker([(measurePoints[i-1].lat+measurePoints[i].lat)/2,(measurePoints[i-1].lng+measurePoints[i].lng)/2],{
+                icon:L.divIcon({className:'',html:'<span style="background:white;padding:2px 8px;border-radius:6px;font-size:11px;border:1px solid #2d6a4f;white-space:nowrap;">'+formatDist(sd)+'</span>',iconSize:[0,0]})
+            }).addTo(map));
+        }
+        var lp = measurePoints[measurePoints.length-1];
+        measureLabels.push(L.marker([lp.lat,lp.lng],{
+            icon:L.divIcon({className:'',html:'<span style="background:#2d6a4f;color:white;padding:3px 10px;border-radius:6px;font-size:12px;font-weight:bold;white-space:nowrap;">总计: '+formatDist(total)+'</span>',iconSize:[0,0],iconAnchor:[0,24]})
+        }).addTo(map));
+    }
+});
+
+map.on('contextmenu', function(e) { if(measureMode){L.DomEvent.preventDefault(e);measureMode=false;map.getContainer().style.cursor='';} });
+document.addEventListener('keydown', function(e) { if(e.key==='Escape'&&measureMode){measureMode=false;map.getContainer().style.cursor='';} });
+
+// 全图按钮
+L.Control.FullView = L.Control.extend({
+    onAdd: function(map) {
+        var btn = L.DomUtil.create('button','leaflet-bar leaflet-control');
+        btn.innerHTML = '<i class="bi bi-arrows-fullscreen" style="font-size:14px;"></i>';
+        btn.title = '全图';
+        btn.style.cssText = 'padding:4px 6px;cursor:pointer;background:white;';
+        L.DomEvent.on(btn,'click',function(){if(trackLayers.length>0)map.fitBounds(L.featureGroup(trackLayers).getBounds().pad(0.1));});
+        return btn;
+    }
+});
+new L.Control.FullView({position:'topright'}).addTo(map);
+
+// 轨迹
+var trackLayers = [];
+var trackColors = ['#1a472a','#2e7d32','#4caf50','#81c784','#388e3c','#66bb6a','#a5d6a7','#00695c'];
+
+// 回放状态与静态图层
+var currentTrackCoords = [];   // [[lat,lng], ...]
+var currentTrackData = [];     // [{lat,lng,ts}] 带GPS时间戳，用于换算真实作业时长
+var staticLine = null;         // 静态完整轨迹线
+var staticPoints = null;       // 静态轨迹点群（L.layerGroup）
+var playedLine = null;         // 回放时逐步绘制的轨迹线
+var playbackMarker = null;     // 回放农机图标
+var playTimer = null;
+var playIdx = 0;
+var lastDrawn = 0;             // 已绘制到第几个点
+var isPlaying = false;
+
+// 清除当前所有图层（切换地块时调用）
+function clearTrackLayers() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    isPlaying = false;
+    if (staticLine) { map.removeLayer(staticLine); staticLine = null; }
+    if (staticPoints) { map.removeLayer(staticPoints); staticPoints = null; }
+    if (playedLine) { map.removeLayer(playedLine); playedLine = null; }
+    if (playbackMarker) { map.removeLayer(playbackMarker); playbackMarker = null; }
+    trackLayers = [];
+    playIdx = 0; lastDrawn = 0;
+    currentTrackCoords = []; currentTrackData = [];
+    document.getElementById('pbFill').style.width = '0%';
+    document.getElementById('pbLabel').textContent = '0:00 / 0:00';
+}
+
+function loadAllTracks() {
+    fetch('{% url "all_tracks_geojson" %}').then(r=>r.json()).then(data=>{
+        data.features.forEach((f,i)=>{
+            var c = trackColors[i%trackColors.length];
+            trackLayers.push(L.geoJSON(f,{
+                style:{color:c,weight:3,opacity:0.85},
+                onEachFeature:function(feature,layer){
+                    layer.bindPopup('<div style="min-width:120px"><strong>'+feature.properties.name+'</strong><br><span style="color:#888">轨迹点: '+feature.properties.point_count+'</span></div>');
+                }
+            }).addTo(map));
+        });
+        if(trackLayers.length>0) map.fitBounds(L.featureGroup(trackLayers).getBounds().pad(0.1));
+    });
+}
+
+function loadTrack(id, el) {
+    document.querySelectorAll('.track-list li').forEach(li=>li.classList.remove('active'));
+    if(el) el.classList.add('active');
+    fetch('/tracks/geojson/'+id+'/').then(r=>r.json()).then(data=>{
+        clearTrackLayers();
+        currentTrackData = [];
+        staticPoints = L.layerGroup();
+        data.features.forEach(f=>{
+            if(f.geometry.type==='LineString'){
+                staticLine = L.geoJSON(f,{style:{color:trackColors[0],weight:4,opacity:0.9}}).addTo(map);
+                trackLayers.push(staticLine);
+                map.fitBounds(staticLine.getBounds().pad(0.1));
+            } else if(f.geometry.type==='Point'){
+                var m=L.circleMarker([f.geometry.coordinates[1],f.geometry.coordinates[0]],{
+                    radius:3,fillColor:f.properties.working_status?'#4caf50':'#ff7043',fillOpacity:0.7,color:'#333',weight:1
+                });
+                var p=f.properties;
+                m.bindPopup('<div style="min-width:160px;font-size:13px;"><strong style="color:#2d6a4f;">#'+p.sequence+'</strong><hr style="margin:4px 0;"><b>时间:</b> '+p.gps_time+'<br><b>速度:</b> '+p.speed+' km/h<br><b>航向:</b> '+p.heading+'<br><b>工作:</b> '+(p.working_status?'<span style="color:#4caf50">工作中</span>':'<span style="color:#ff7043">未工作</span>')+'<br><b>幅宽:</b> '+p.width+' m<br><b>深度:</b> '+p.depth+' mm / 标准 '+p.depth_standard+' mm</div>');
+                staticPoints.addLayer(m);
+                // 收集回放数据：坐标 + GPS 时间戳（毫秒），用于换算真实作业时长
+                currentTrackData.push({lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], ts: p.gps_ts});
+            }
+        });
+        staticPoints.addTo(map);
+        // 由点数据派生回放坐标
+        currentTrackCoords = currentTrackData.map(p => [p.lat, p.lng]);
+        if (currentTrackData.length > 0) {
+            resetPlaybackDisplay();   // 重置进度与时间标签（修复切换地块后残留旧数值）
+            showPlaybackBar(true);
+        }
+        // 加载信息面板
+        loadTrackInfo(id);
+    });
+}
+
+function loadTrackInfo(id) {
+    var panel = document.getElementById('trackInfoPanel');
+    fetch('/tracks/stats/'+id+'/').then(r=>r.json()).then(s=>{
+        if (s.error) { panel.style.display='none'; return; }
+        panel.style.display = 'block';
+        panel.innerHTML =
+            '<div class="tip-title"><i class="bi bi-geo-alt-fill"></i> '+s.name+'</div>' +
+            '<div class="tip-grid">' +
+              '<div class="tip-item"><div class="v">'+s.total_duration_hours+' h</div><div class="l">作业总时长</div></div>' +
+              '<div class="tip-item"><div class="v">'+s.total_distance_km+' km</div><div class="l">作业总行程</div></div>' +
+              '<div class="tip-item"><div class="v">'+s.area_mu+' 亩</div><div class="l">作业面积</div></div>' +
+              '<div class="tip-item"><div class="v">'+s.avg_working_speed+'</div><div class="l">平均速度km/h</div></div>' +
+            '</div>' +
+            '<div class="tip-foot">有效作业 '+s.working_time_hours+'h · 剔除停歇 '+s.shutdown_time_hours+'h（'+s.shutdown_count+'处） · 工作点 '+s.working_point_count+'/'+s.point_count+'</div>';
+    }).catch(()=>{ panel.style.display='none'; });
+}
+
+// ===== 回放控制 =====
+// 回放时隐藏静态轨迹线与轨迹点，只保留农机图标 + 一条“逐步绘制”的琥珀色轨迹线，
+// 让用户清晰看到农机从起点到终点完整走过整个地块的过程。
+// 播放结束保留完整轨迹；点击“停止”恢复原来的静态轨迹显示。
+
+function showPlaybackBar(show) {
+    document.getElementById('playbackBar').classList.toggle('show', show && currentTrackCoords.length>0);
+    if (!show) stopPlayback();
+}
+
+function tractorIcon(bearing) {
+    var rot = bearing ? bearing : 0;
+    return L.divIcon({
+        className: '',
+        html: '<div class="tractor-div" style="transform:rotate('+rot+'deg);">🚜</div>',
+        iconSize: [34,34],
+        iconAnchor: [17,17]
+    });
+}
+
+function bearing(a, b) {
+    var dx = b[1]-a[1], dy = b[0]-a[0];
+    var ang = Math.atan2(dx, dy) * 180 / Math.PI;
+    return (ang + 360) % 360;
+}
+
+function hideStaticLayers() {
+    if (staticLine && map.hasLayer(staticLine)) map.removeLayer(staticLine);
+    if (staticPoints && map.hasLayer(staticPoints)) map.removeLayer(staticPoints);
+}
+
+function restoreStaticLayers() {
+    if (staticLine && !map.hasLayer(staticLine)) staticLine.addTo(map);
+    if (staticPoints && !map.hasLayer(staticPoints)) staticPoints.addTo(map);
+}
+
+// 把秒数格式化为 “H:MM:SS”（不足1小时则为 “M:SS”）
+function fmtTime(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    sec = Math.floor(sec);
+    var h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+    function p(n){ return n<10 ? '0'+n : ''+n; }
+    return h>0 ? h+':'+p(m)+':'+p(s) : m+':'+p(s);
+}
+
+// 按 GPS 时间戳换算“已播放 / 总时长”，显示为几分几秒
+function updatePlaybackLabel() {
+    var lbl = document.getElementById('pbLabel');
+    var n = currentTrackData.length;
+    if (n === 0) { lbl.textContent = '0:00 / 0:00'; return; }
+    var t0 = currentTrackData[0].ts;
+    var total = (currentTrackData[n-1].ts - t0) / 1000;
+    var idx = Math.min(playIdx, n-1);
+    var elapsed = (currentTrackData[idx].ts - t0) / 1000;
+    lbl.textContent = fmtTime(elapsed) + ' / ' + fmtTime(total);
+}
+
+// 切换地块后重置回放进度与时间标签
+function resetPlaybackDisplay() {
+    playIdx = 0; lastDrawn = 0;
+    if (playedLine) { map.removeLayer(playedLine); playedLine = null; }
+    if (playbackMarker) { map.removeLayer(playbackMarker); playbackMarker = null; }
+    isPlaying = false;
+    document.querySelector('#pbPlay i').className = 'bi bi-play-fill';
+    document.getElementById('pbFill').style.width = '0%';
+    updatePlaybackLabel();
+}
+
+function updateMarkerHead() {
+    if (!playbackMarker) return;
+    var cur = currentTrackCoords[playIdx];
+    var nxt = currentTrackCoords[Math.min(playIdx+1, currentTrackCoords.length-1)];
+    playbackMarker.setLatLng(cur);
+    playbackMarker.setIcon(tractorIcon(bearing(cur, nxt)));
+    var pct = currentTrackCoords.length>1 ? (playIdx/(currentTrackCoords.length-1)*100) : 0;
+    document.getElementById('pbFill').style.width = pct + '%';
+    updatePlaybackLabel();
+}
+
+function runTimer() {
+    var speed = parseInt(document.getElementById('pbSpeed').value);
+    playTimer = setInterval(function(){
+        playIdx += speed;
+        if (playIdx >= currentTrackCoords.length - 1) playIdx = currentTrackCoords.length - 1;
+        // 把新走过的点追加到已绘制轨迹，使轨迹随农机行进逐步生长
+        for (var k = lastDrawn + 1; k <= playIdx; k++) {
+            playedLine.addLatLng(currentTrackCoords[k]);
+        }
+        lastDrawn = playIdx;
+        updateMarkerHead();
+        if (playIdx >= currentTrackCoords.length - 1) pausePlayback();  // 自然结束，保留完整轨迹
+    }, 30);
+}
+
+// 全新开始：隐藏静态轨迹，建立空的“已走过”轨迹线
+function startPlayback() {
+    if (currentTrackCoords.length < 2) return;
+    if (playedLine) { map.removeLayer(playedLine); playedLine = null; }
+    hideStaticLayers();
+    playedLine = L.polyline([currentTrackCoords[0]], {
+        color: '#f4a261', weight: 5, opacity: 0.95, lineJoin: 'round', lineCap: 'round'
+    }).addTo(map);
+    lastDrawn = 0;
+    if (!playbackMarker) {
+        playbackMarker = L.marker(currentTrackCoords[0], {icon: tractorIcon(0)}).addTo(map);
+    } else {
+        playbackMarker.setLatLng(currentTrackCoords[0]);
+    }
+    updateMarkerHead();
+    isPlaying = true;
+    document.querySelector('#pbPlay i').className = 'bi bi-pause-fill';
+    runTimer();
+}
+
+// 从暂停处继续，保留已绘制的轨迹
+function resumePlayback() {
+    isPlaying = true;
+    document.querySelector('#pbPlay i').className = 'bi bi-pause-fill';
+    runTimer();
+}
+
+function pausePlayback() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    isPlaying = false;
+    document.querySelector('#pbPlay i').className = 'bi bi-play-fill';
+}
+
+// 停止：清除回放绘制并恢复静态轨迹显示
+function stopPlayback() {
+    pausePlayback();
+    playIdx = 0; lastDrawn = 0;
+    if (playedLine) { map.removeLayer(playedLine); playedLine = null; }
+    if (playbackMarker) { map.removeLayer(playbackMarker); playbackMarker = null; }
+    document.getElementById('pbFill').style.width = '0%';
+    updatePlaybackLabel();
+    restoreStaticLayers();
+}
+
+document.getElementById('pbPlay').addEventListener('click', function(){
+    if (isPlaying) { pausePlayback(); return; }
+    if (playIdx >= currentTrackCoords.length - 1) {
+        playIdx = 0;            // 已结束，从头开始
+        startPlayback();
+    } else if (playedLine && playIdx > 0) {
+        resumePlayback();       // 暂停后继续
+    } else {
+        startPlayback();        // 首次播放
+    }
+});
+document.getElementById('pbStop').addEventListener('click', stopPlayback);
+document.getElementById('pbSpeed').addEventListener('change', function(){
+    if (isPlaying) { pausePlayback(); resumePlayback(); }
+});
+
+// 搜索
+document.getElementById('trackSearch').addEventListener('input', function(){
+    var kw = this.value.toLowerCase();
+    document.querySelectorAll('.track-list li[data-name]').forEach(li=>{
+        li.style.display = li.dataset.name.toLowerCase().includes(kw) ? '' : 'none';
+    });
+});
+
+document.getElementById('sidebarToggle').addEventListener('click', function(){
+    document.getElementById('sidebar').classList.toggle('collapsed');
+});
+
+loadAllTracks();
+</script>
+{% endblock %}
